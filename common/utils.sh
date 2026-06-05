@@ -1,13 +1,17 @@
 #!/system/bin/sh
-# DeviceSpoofLabs - Shared Utilities
-# Common functions, colors, and path definitions
+MODDIR="${MODDIR:-/data/adb/modules/devicespooflab}"
+SCRIPT_DIR="${SCRIPT_DIR:-${0%/*}}"
+LOG_FILE="${LOG_FILE:-/data/adb/devicespooflab/devicespooflab.log}"
 
-MODDIR="/data/adb/modules/devicespooflab"
-CONFIG_DIR="${MODDIR}/config"
-PERSONA_FLAG="${CONFIG_DIR}/persona_active"
-LOG_FILE="/data/local/tmp/devicespooflab.log"
+if [ -f "${SCRIPT_DIR}/state.sh" ]; then
+    . "${SCRIPT_DIR}/state.sh"
+    ensure_persistent_state
+else
+    CONFIG_DIR="${CONFIG_DIR:-${MODDIR}/config}"
+    PERSONA_FLAG="${PERSONA_FLAG:-${CONFIG_DIR}/persona_active}"
+    BACKUP_FILE="${BACKUP_FILE:-${CONFIG_DIR}/backup.conf}"
+fi
 
-# Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -16,28 +20,36 @@ CYAN='\033[0;36m'
 MAGENTA='\033[0;35m'
 NC='\033[0m'
 
-# Print functions
 print_color() {
-    echo -e "${1}${2}${NC}"
+    printf '%b\n' "${1}${2}${NC}"
 }
 
 print_error() {
-    echo -e "${RED}[!] ${1}${NC}"
+    printf '%b\n' "${RED}[!] ${1}${NC}"
 }
 
 print_ok() {
-    echo -e "${GREEN}[+] ${1}${NC}"
+    printf '%b\n' "${GREEN}[+] ${1}${NC}"
 }
 
 print_warn() {
-    echo -e "${YELLOW}[*] ${1}${NC}"
+    printf '%b\n' "${YELLOW}[*] ${1}${NC}"
 }
 
 print_info() {
-    echo -e "${CYAN}[i] ${1}${NC}"
+    printf '%b\n' "${CYAN}[i] ${1}${NC}"
 }
 
-# Logging function
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+    case "$(type append_log_line 2>/dev/null)" in
+        *function*)
+            append_log_line "[$(date '+%Y-%m-%d %H:%M:%S')] $1"
+            ;;
+        *)
+            mkdir -p "${LOG_FILE%/*}" 2>/dev/null
+            chmod 700 "${LOG_FILE%/*}" 2>/dev/null
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
+            chmod 600 "$LOG_FILE" 2>/dev/null
+            ;;
+    esac
 }

@@ -1,51 +1,82 @@
 #!/system/bin/sh
-# Applies critical props early; remaining spoofing runs in service.sh
+# Pre-zygote stage: apply spoofed identity props and reconcile the Android ID.
 
 MODDIR=${0%/*}
-CONFIG_DIR="${MODDIR}/config"
-PERSONA_FLAG="${CONFIG_DIR}/persona_active"
-LOG_FILE="/data/local/tmp/devicespooflab.log"
-EARLY_CONF="${CONFIG_DIR}/early_boot.conf"
+LOG_FILE="${LOG_FILE:-/data/adb/devicespooflab/devicespooflab.log}"
 
 log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [post-fs-data] $1" >> "$LOG_FILE"
-}
-
-should_apply_prop() {
-    return 0
-}
-
-if [ -f "${MODDIR}/common/prop_safety.sh" ]; then
-    . "${MODDIR}/common/prop_safety.sh"
-else
-    log "WARN: prop_safety.sh missing - applying all props (legacy mode)"
-fi
-
-resolve_value() {
-    local VAL="$1"
-    case "$VAL" in
-        '${RANDOM_HEX:'*'}')
-            local LEN=$(echo "$VAL" | sed 's/.*:\([0-9]*\)}.*/\1/')
-            cat /dev/urandom | tr -dc 'a-f0-9' | head -c "$LEN"
-            ;;
-        '${RANDOM_SERIAL}')
-            cat /dev/urandom | tr -dc 'A-Z0-9' | head -c 12
+    case "$(type append_log_line 2>/dev/null)" in
+        *function*)
+            append_log_line "[$(date '+%Y-%m-%d %H:%M:%S')] [post-fs-data] $1"
             ;;
         *)
-            echo "$VAL"
+            mkdir -p "${LOG_FILE%/*}" 2>/dev/null
+            chmod 700 "${LOG_FILE%/*}" 2>/dev/null
+            echo "[$(date '+%Y-%m-%d %H:%M:%S')] [post-fs-data] $1" >> "$LOG_FILE"
+            chmod 600 "$LOG_FILE" 2>/dev/null
             ;;
     esac
 }
 
-wait_for_resetprop() {
-    local WAIT=0
-    while [ $WAIT -lt 30 ]; do
-        command -v resetprop >/dev/null 2>&1 && return 0
-        sleep 1
-        WAIT=$((WAIT + 1))
-    done
+if [ -f "${MODDIR}/common/state.sh" ]; then
+    . "${MODDIR}/common/state.sh"
+    ensure_persistent_state
+else
+    CONFIG_DIR="${CONFIG_DIR:-${MODDIR}/config}"
+    PERSONA_FLAG="${PERSONA_FLAG:-${CONFIG_DIR}/persona_active}"
+    BACKUP_FILE="${BACKUP_FILE:-${CONFIG_DIR}/backup.conf}"
+    REBOOT_PENDING="${REBOOT_PENDING:-${CONFIG_DIR}/reboot_pending}"
+fi
+
+rm -f "$REBOOT_PENDING" 2>/dev/null
+
+if [ -f "${MODDIR}/common/android_id.sh" ]; then
+    . "${MODDIR}/common/android_id.sh"
+    if [ -f "${MODDIR}/disable" ]; then
+        if ai_boot_revert; then
+            log "Android ID reverted (module disabled)"
+        else
+            log "ERROR: Android ID revert failed: ${AI_ERROR:-unknown}"
+        fi
+    elif ai_boot_reconcile; then
+        [ "${AI_APPLIED_COUNT:-0}" -gt 0 ] && \
+            log "Android ID applied to ${AI_APPLIED_COUNT} app(s)${AI_SKIPPED_PKGS:+; no SSAID yet: ${AI_SKIPPED_PKGS}}"
+    else
+        log "ERROR: Android ID reconcile failed: ${AI_ERROR:-unknown}"
+    fi
+fi
+
+fail_closed_should_apply_prop() {
+    local PROP="$1"
+    local VALUE="$2"
+    local STAGE="$3"
+    local SOURCE="$4"
+
+    log "ERROR: Safety guard unavailable (${STAGE}/${SOURCE}) - refusing prop: $PROP"
     return 1
 }
+
+should_apply_prop() {
+    fail_closed_should_apply_prop "$@"
+}
+
+if [ -f "${MODDIR}/common/prop_safety.sh" ]; then
+    if ! . "${MODDIR}/common/prop_safety.sh"; then
+        log "ERROR: prop_safety.sh failed to load - refusing all props"
+        should_apply_prop() {
+            fail_closed_should_apply_prop "$@"
+        }
+    fi
+else
+    log "ERROR: prop_safety.sh missing - refusing all props"
+fi
+
+if [ -f "${MODDIR}/common/value_resolver.sh" ]; then
+    . "${MODDIR}/common/value_resolver.sh"
+else
+    log "ERROR: value_resolver.sh missing - aborting spoof"
+    exit 0
+fi
 
 apply_prop() {
     local PROP="$1"
@@ -53,8 +84,8 @@ apply_prop() {
 
     [ -z "$VALUE" ] && return 1
 
-    if resetprop -n "$PROP" "$VALUE" 2>/dev/null; then
-        log "Prop set: $PROP=$VALUE"
+    if "$RESETPROP" -n "$PROP" "$VALUE" 2>/dev/null; then
+        log "Prop set: $PROP"
         return 0
     else
         log "ERROR: Failed to set prop: $PROP"
@@ -62,15 +93,18 @@ apply_prop() {
     fi
 }
 
-apply_early_props() {
-    [ ! -f "$EARLY_CONF" ] && { log "No early boot config - skipping"; return; }
+apply_config_file() {
+    local FILE="$1"
+    local NAME=$(basename "$FILE")
 
-    if grep -q '^FILE_DISABLED' "$EARLY_CONF" 2>/dev/null; then
-        log "Early boot config disabled - skipping"
+    [ ! -f "$FILE" ] && return
+
+    if grep -q '^FILE_DISABLED' "$FILE" 2>/dev/null; then
+        log "Skipping (disabled): $NAME"
         return
     fi
 
-    log "Applying early-boot props"
+    log "Applying: $NAME"
 
     while IFS= read -r LINE || [ -n "$LINE" ]; do
         case "$LINE" in ''|'#'*) continue ;; esac
@@ -82,17 +116,32 @@ apply_early_props() {
 
         [ "$STATUS" != "ENABLED" ] && continue
 
-        local VALUE
-        VALUE=$(resolve_value "$RAW")
+        if has_generator_token "$RAW"; then
+            log "ERROR: Unresolved generator token for $PROP in $NAME - activate persona from CLI to freeze it"
+            continue
+        fi
+
+        local VALUE="$RAW"
         [ -n "$VALUE" ] || continue
-        should_apply_prop "$PROP" "$VALUE" "post-fs-data" "$(basename "$EARLY_CONF")" || continue
+        should_apply_prop "$PROP" "$VALUE" "post-fs-data" "$NAME" || continue
         apply_prop "$PROP" "$VALUE"
 
-    done < "$EARLY_CONF"
+    done < "$FILE"
+}
+
+apply_all_props() {
+    for CONF in \
+        device_identity.conf \
+        build_info.conf \
+        identifiers.conf \
+        custom.conf; do
+
+        [ -f "${CONFIG_DIR}/${CONF}" ] && apply_config_file "${CONFIG_DIR}/${CONF}"
+    done
 }
 
 log "============================================"
-log "DeviceSpoofLabs post-fs-data - early props stage"
+log "DeviceSpoofLabs post-fs-data - pre-zygote spoof stage"
 
 if [ -f "${MODDIR}/disable" ]; then
     log "Module disabled - skipping"
@@ -104,14 +153,22 @@ if [ ! -f "$PERSONA_FLAG" ]; then
     exit 0
 fi
 
-if wait_for_resetprop; then
-    log "resetprop ready"
-else
-    log "resetprop not available - aborting early props"
-    exit 1
+RESETPROP="$(command -v resetprop 2>/dev/null)"
+if [ -z "$RESETPROP" ]; then
+    for CAND in /data/adb/ksu/bin/resetprop \
+                /data/adb/ap/bin/resetprop \
+                /data/adb/magisk/resetprop; do
+        [ -x "$CAND" ] && { RESETPROP="$CAND"; break; }
+    done
 fi
 
-# Apply only the early boot props here. the rest in service.sh happens after boot
-apply_early_props
+if [ -n "$RESETPROP" ]; then
+    log "resetprop ready: $RESETPROP"
+else
+    log "resetprop not found (checked PATH, /data/adb/{ksu,ap}/bin, /data/adb/magisk) - aborting spoof"
+    exit 0
+fi
 
-log "Early boot props applied; remaining props will load after boot"
+apply_all_props
+
+log "Pre-zygote spoof complete"

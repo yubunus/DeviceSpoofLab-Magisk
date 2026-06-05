@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <title>DeviceSpoofLabs</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-title">DeviceSpoofLabs</div>
+    <div class="app-version" id="app-version">v—</div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab is-active" data-tab="dashboard">Dashboard</button>
+    <button class="tab" data-tab="personas">Personas</button>
+    <button class="tab" data-tab="config">Config</button>
+    <button class="tab" data-tab="settings">Settings</button>
+  </nav>
+
+  <main id="content">
+    <div id="no-bridge" class="card notice hidden">
+      <div class="card-title">WebUI needs KernelSU or APatch</div>
+      <p class="muted">This page talks to the module through the root manager's WebUI bridge,
+        which Magisk doesn't provide. On Magisk, control the module from a root shell:</p>
+      <pre class="logs">su
+devicespooflabs status
+devicespooflabs generate-persona
+devicespooflabs activate
+devicespooflabs deactivate
+devicespooflabs reboot</pre>
+    </div>
+
+    <section class="tab-panel is-active" id="panel-dashboard">
+      <div class="card">
+        <div class="card-label">Persona status</div>
+        <div id="persona-status" class="status-pill status-unknown">Loading…</div>
+        <div id="persona-active-name" class="persona-active-name hidden"></div>
+        <div id="status-error" class="status-error-note hidden">
+          <span>Couldn't read module status. Spoofing may still be active — this is a read
+            error, not a confirmation that the persona is off.</span>
+          <button class="btn" id="btn-retry-status">Retry</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Live values</div>
+        <div class="muted-note" id="values-note"></div>
+        <div id="values-table" class="values"></div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-personas">
+      <div class="personas-bar">
+        <div class="personas-bar-text">
+          <div class="card-title" style="margin:0">Personas</div>
+          <p class="muted" style="margin:2px 0 0">Switch one on to spoof its identity. Only one
+            runs at a time; with none on, nothing is spoofed. Changes apply on reboot.</p>
+        </div>
+        <button class="btn btn-primary persona-new" id="btn-generate-persona">+ Generate</button>
+      </div>
+      <div id="personas-list" class="personas-list"></div>
+      <div id="personas-empty" class="card personas-empty hidden">
+        <div class="card-title">No personas yet</div>
+        <p class="muted">Tap <b>+ Generate</b> to create your first spoofed identity. You can rename
+          it, tweak its config, and switch it on or off from here.</p>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-config">
+      <div id="config-no-persona" class="card notice hidden">
+        <div class="card-title">No active persona</div>
+        <p class="muted">The Config tab edits whichever persona is switched on. Generate or activate
+          one in the Personas tab, then come back to tweak its identity and Android ID.</p>
+        <div class="actions"><button class="btn" data-go-tab="personas">Go to Personas</button></div>
+      </div>
+
+      <div id="config-body">
+      <div class="card" id="android-id-card">
+        <div class="ai-head">
+          <div class="ai-head-text">
+            <div class="card-title">Android ID (SSAID)</div>
+            <p class="muted">Spoof the per-app Android ID for the apps you choose. Saved with this
+              persona; applied on the next reboot.</p>
+          </div>
+          <label class="switch" title="Enable Android ID spoofing for this persona">
+            <input type="checkbox" id="ai-enabled"><span class="slider"></span>
+          </label>
+        </div>
+
+        <button class="btn btn-target" id="btn-open-apps">
+          <span class="target-main">
+            <span class="target-label">Target Apps</span>
+            <span class="target-count" id="ai-target-count">0 apps selected</span>
+          </span>
+          <span class="target-chevron" aria-hidden="true">›</span>
+        </button>
+
+        <div class="ai-field">
+          <label class="ai-field-label" for="ai-value">Android ID value</label>
+          <div class="ai-value-row">
+            <input id="ai-value" type="text" inputmode="latin" autocapitalize="none"
+                   autocomplete="off" spellcheck="false" maxlength="16"
+                   placeholder="16 hex characters">
+            <button class="btn" id="ai-generate" type="button">Generate</button>
+          </div>
+          <div class="ai-hint" id="ai-value-hint">16 lowercase hex characters (0–9, a–f).</div>
+        </div>
+      </div>
+
+      <div id="config-editors"></div>
+      </div>
+    </section>
+
+    <section class="tab-panel" id="panel-settings">
+      <div class="card">
+        <div class="card-title">About</div>
+        <div class="kv"><span>Version</span><span id="settings-version">—</span></div>
+        <div class="kv"><span>Unsafe prop mode</span><span id="settings-unsafe">—</span></div>
+        <div class="kv"><span>Backup captured</span><span id="settings-backup">—</span></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">Logs</div>
+        <div class="actions">
+          <button class="btn" id="btn-view-logs">View logs</button>
+          <button class="btn" id="btn-diagnostics">Diagnostics</button>
+          <button class="btn" id="btn-export-logs">Export to /sdcard</button>
+          <button class="btn btn-danger-outline" id="btn-clear-logs">Clear logs</button>
+        </div>
+        <pre id="logs-view" class="logs hidden"></pre>
+      </div>
+
+      <div class="card author-card">
+        <div class="card-title">Author</div>
+        <div class="author-profile">
+          <img class="author-avatar" src="assets/yubunus-avatar.jpg" alt="" aria-hidden="true">
+          <div class="author-main">
+            <div class="author-name">yubunus</div>
+          </div>
+        </div>
+        <div class="author-links" aria-label="Author links">
+          <a class="btn author-link" href="https://github.com/yubunus" data-external-url="https://github.com/yubunus" target="_blank" rel="noopener noreferrer" aria-label="Open GitHub profile">
+            <svg class="author-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M12 .5a12 12 0 0 0-3.79 23.39c.6.11.82-.26.82-.58v-2.04c-3.34.73-4.04-1.42-4.04-1.42-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.21.08 1.85 1.24 1.85 1.24 1.07 1.84 2.81 1.31 3.5 1 .11-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.92 0-1.31.47-2.38 1.24-3.22-.12-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23a11.5 11.5 0 0 1 6.01 0c2.29-1.55 3.3-1.23 3.3-1.23.66 1.66.24 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.6-2.81 5.62-5.48 5.92.43.37.81 1.1.81 2.22v3.29c0 .32.22.7.82.58A12 12 0 0 0 12 .5Z"/>
+            </svg>
+            <span>GitHub</span>
+          </a>
+          <a class="btn author-link author-link-primary" href="https://t.me/yubunus" data-external-url="https://t.me/yubunus" target="_blank" rel="noopener noreferrer" aria-label="Open Telegram profile">
+            <svg class="author-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M22.21 2.38c.37-.15.78.16.7.56l-3.27 17.62c-.06.34-.46.5-.75.3l-5.4-3.92-2.77 2.69c-.27.26-.72.13-.81-.24l-.98-4.08-5.19-1.7c-.42-.14-.46-.72-.06-.91L21.3 2.43c.28-.13.62-.16.91-.05ZM9.43 14.72l.76 3.18 1.48-2.89 6.96-8.34-9.2 8.05Z"/>
+            </svg>
+            <span>Telegram</span>
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="app-picker" class="app-picker hidden" aria-hidden="true">
+    <header class="picker-header">
+      <button class="picker-back" id="picker-back" type="button" aria-label="Back">‹</button>
+      <div class="picker-heading">
+        <div class="picker-title">Select Target Apps</div>
+        <div class="picker-subtitle" id="picker-count">0 apps selected</div>
+      </div>
+      <button class="btn btn-primary picker-done" id="picker-done" type="button">Done</button>
+    </header>
+    <div class="picker-tools">
+      <div class="picker-search">
+        <span class="picker-search-icon" aria-hidden="true">⌕</span>
+        <input id="picker-search-input" type="search" inputmode="search" autocapitalize="none"
+               autocomplete="off" spellcheck="false" placeholder="Search apps">
+      </div>
+      <label class="picker-sys">
+        <input type="checkbox" id="picker-show-system"> <span>System apps</span>
+      </label>
+    </div>
+    <div class="picker-list" id="picker-list"></div>
+    <div class="picker-status" id="picker-status">Loading apps…</div>
+  </div>
+
+  <div id="toast-bar" class="toast-bar hidden" role="status" aria-live="polite">
+    <div id="toast-message" class="toast-message"></div>
+    <button id="toast-reboot" class="btn btn-primary btn-toast hidden" data-action="reboot">Reboot Now</button>
+  </div>
+
+  <div id="overlay" class="overlay hidden"><div class="spinner"></div></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

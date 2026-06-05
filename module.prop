@@ -1,6 +1,6 @@
 id=devicespooflab
 name=DeviceSpoofLabs
-version=2.3
-versionCode=6
+version=3.0
+versionCode=7
 author=@yubunus
-description=Configurable device prop spoofing with persona management and app data clearing tools. Includes CLI (devicespooflabs). For development and testing only.
+description=A root module for spoofing Android device properties across Magisk, KernelSU, and APatch.

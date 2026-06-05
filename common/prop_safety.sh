@@ -1,42 +1,12 @@
 #!/system/bin/sh
-# Shared compatibility guard for props that can destabilize non-Pixel ROMs.
+# Allowlist guard: only device-identity props may be spoofed; everything else is rejected.
 
 ALLOW_UNSAFE_PROPS_FILE="${CONFIG_DIR}/allow_unsafe_props"
-_DEVICESPOOFLAB_IS_GOOGLE_CACHE=""
 
 safety_log() {
-    if type log >/dev/null 2>&1; then
-        log "$1"
-    fi
-}
-
-read_backup_prop() {
-    local PROP="$1"
-    local BACKUP_FILE="${CONFIG_DIR}/backup.conf"
-
-    [ ! -f "$BACKUP_FILE" ] && return 1
-
-    while IFS='=' read -r KEY VALUE || [ -n "$KEY" ]; do
-        [ "$KEY" = "$PROP" ] && {
-            echo "$VALUE"
-            return 0
-        }
-    done < "$BACKUP_FILE"
-
-    return 1
-}
-
-get_original_prop() {
-    local PROP="$1"
-    local VALUE
-
-    VALUE=$(read_backup_prop "$PROP")
-    if [ -n "$VALUE" ]; then
-        echo "$VALUE"
-        return 0
-    fi
-
-    getprop "$PROP" 2>/dev/null
+    case "$(type log 2>/dev/null)" in
+        *function*) log "$1" ;;
+    esac
 }
 
 unsafe_props_allowed() {
@@ -45,80 +15,62 @@ unsafe_props_allowed() {
     return 1
 }
 
-is_google_device() {
-    case "$_DEVICESPOOFLAB_IS_GOOGLE_CACHE" in
-        yes) return 0 ;;
-        no) return 1 ;;
-    esac
-
-    local BRAND MANUFACTURER FP VENDOR_FP
-
-    BRAND=$(get_original_prop ro.product.brand | tr '[:upper:]' '[:lower:]')
-    [ "$BRAND" = "google" ] && { _DEVICESPOOFLAB_IS_GOOGLE_CACHE=yes; return 0; }
-
-    MANUFACTURER=$(get_original_prop ro.product.manufacturer | tr '[:upper:]' '[:lower:]')
-    [ "$MANUFACTURER" = "google" ] && { _DEVICESPOOFLAB_IS_GOOGLE_CACHE=yes; return 0; }
-
-    FP=$(get_original_prop ro.build.fingerprint | tr '[:upper:]' '[:lower:]')
-    case "$FP" in
-        google/*) _DEVICESPOOFLAB_IS_GOOGLE_CACHE=yes; return 0 ;;
-    esac
-
-    VENDOR_FP=$(get_original_prop ro.vendor.build.fingerprint | tr '[:upper:]' '[:lower:]')
-    case "$VENDOR_FP" in
-        google/*) _DEVICESPOOFLAB_IS_GOOGLE_CACHE=yes; return 0 ;;
-    esac
-
-    _DEVICESPOOFLAB_IS_GOOGLE_CACHE=no
-    return 1
-}
-
-is_framework_version_prop() {
+is_safe_identity_prop() {
     case "$1" in
-        ro.build.version.sdk|\
-        ro.build.version.release|\
-        ro.build.version.release_or_codename|\
-        ro.build.version.codename|\
-        ro.product.build.version.sdk|\
-        ro.product.build.version.release|\
-        ro.product.build.version.release_or_codename|\
-        ro.*.build.version.sdk|\
-        ro.*.build.version.release|\
-        ro.*.build.version.release_or_codename|\
-        ro.*.build.version.codename)
+        ro.product.brand|\
+        ro.product.manufacturer|\
+        ro.product.model|\
+        ro.product.name|\
+        ro.product.device|\
+        ro.product.board|\
+        ro.product.system.*|\
+        ro.product.system_ext.*|\
+        ro.product.product.*|\
+        ro.product.vendor.*|\
+        ro.product.odm.*)
             return 0
             ;;
-    esac
-
-    return 1
-}
-
-is_non_google_unsafe_prop() {
-    case "$1" in
-        ro.hardware|\
-        ro.board.platform|\
-        ro.boot.*|\
-        ro.product.cpu.*|\
-        ro.arch|\
-        ro.sf.lcd_density|\
-        ro.treble.enabled|\
-        ro.kernel.qemu|\
-        ro.crypto.state|\
-        sys.oem_unlock_allowed|\
-        ro.build.selinux|\
-        gsm.*|\
-        persist.sys.timezone|\
-        persist.sys.usb.config|\
-        ro.product.vendor.*|\
-        ro.product.vendor_dlkm.*|\
-        ro.product.odm.*|\
-        ro.product.bootimage.*|\
-        ro.product.system_dlkm.*|\
-        ro.vendor.*|\
-        ro.vendor_dlkm.*|\
-        ro.odm.*|\
-        ro.bootimage.*|\
-        ro.system_dlkm.*)
+        ro.build.fingerprint|\
+        ro.build.id|\
+        ro.build.display.id|\
+        ro.build.version.incremental|\
+        ro.build.version.security_patch|\
+        ro.build.type|\
+        ro.build.tags|\
+        ro.build.description|\
+        ro.build.product|\
+        ro.build.device|\
+        ro.build.characteristics|\
+        ro.build.flavor|\
+        ro.product.build.fingerprint|\
+        ro.product.build.id|\
+        ro.product.build.tags|\
+        ro.product.build.type|\
+        ro.product.build.version.incremental|\
+        ro.system.build.fingerprint|\
+        ro.system_ext.build.fingerprint)
+            return 0
+            ;;
+        ro.vendor.build.fingerprint|\
+        ro.vendor.build.id|\
+        ro.vendor.build.version.incremental|\
+        ro.vendor.build.security_patch|\
+        ro.vendor.build.tags|\
+        ro.vendor.build.type|\
+        ro.odm.build.fingerprint|\
+        ro.odm.build.id|\
+        ro.odm.build.version.incremental|\
+        ro.odm.build.security_patch|\
+        ro.odm.build.tags|\
+        ro.odm.build.type|\
+        ro.bootimage.build.fingerprint|\
+        ro.bootimage.build.id|\
+        ro.bootimage.build.version.incremental)
+            return 0
+            ;;
+        ro.serialno|\
+        ro.boot.serialno|\
+        ro.bootloader)
             return 0
             ;;
     esac
@@ -134,15 +86,10 @@ should_apply_prop() {
 
     unsafe_props_allowed && return 0
 
-    if is_framework_version_prop "$PROP"; then
-        safety_log "Compatibility skip (${STAGE}/${SOURCE}): $PROP=$VALUE (framework version props are opt-in)"
-        return 1
+    if is_safe_identity_prop "$PROP"; then
+        return 0
     fi
 
-    if ! is_google_device && is_non_google_unsafe_prop "$PROP"; then
-        safety_log "Compatibility skip (${STAGE}/${SOURCE}): $PROP=$VALUE (non-Google device guard)"
-        return 1
-    fi
-
-    return 0
+    safety_log "Allowlist skip (${STAGE}/${SOURCE}): $PROP=$VALUE (not a safe identity prop)"
+    return 1
 }

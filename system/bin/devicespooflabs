@@ -1,2 +1,2 @@
 #!/system/bin/sh
-exec /data/adb/modules/devicespooflab/common/devicespooflabs.sh "$@"
+exec /data/adb/modules/devicespooflab/common/webctl.sh "$@"
