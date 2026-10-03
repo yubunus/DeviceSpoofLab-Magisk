@@ -67,7 +67,8 @@ ai_get_targets() {
     local LINE PKG
     grep '^PKG=' "$ANDROID_ID_CONF" 2>/dev/null | while IFS= read -r LINE; do
         PKG=${LINE#PKG=}
-        ai_valid_pkg "$PKG" && printf '%s\n' "$PKG"
+        # echo, not printf (a process on Android's mksh): a package name is [A-Za-z0-9._]
+        ai_valid_pkg "$PKG" && echo "$PKG"
     done
 }
 

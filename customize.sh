@@ -5,7 +5,7 @@ SKIPUNZIP=0
 
 ui_print " "
 ui_print "********************************"
-ui_print "   DeviceSpoofLabs v3.0"
+ui_print "   DeviceSpoofLabs v3.1"
 ui_print "********************************"
 ui_print " "
 
@@ -52,6 +52,30 @@ warn_if_unsafe_props_enabled() {
 }
 
 warn_if_unsafe_props_enabled
+
+# 3.0 personas list props that 3.1 no longer sets (ro.product.device is one of them).
+# The active config only counts while spoofing is on; otherwise it is just the 3.0 template.
+warn_if_old_personas() {
+    local CONF FOUND=0
+    for CONF in "${DATA_DIR}"/personas/*/device_identity.conf; do
+        [ -f "$CONF" ] || continue
+        if grep -q ',ro\.product\.device,' "$CONF" 2>/dev/null; then
+            FOUND=1
+            break
+        fi
+    done
+    if [ "$FOUND" -eq 0 ] && [ -f "$PERSONA_FLAG" ] && \
+        grep -q ',ro\.product\.device,' "${CONFIG_DIR}/device_identity.conf" 2>/dev/null; then
+        FOUND=1
+    fi
+    [ "$FOUND" -eq 1 ] || return 0
+
+    ui_print "! Personas made with 3.0 are out of date:"
+    ui_print "! 3.1 skips many of their props and they hold old build values"
+    ui_print "! Delete them and generate new ones after the reboot"
+}
+
+warn_if_old_personas
 
 ui_print "- Installing module files..."
 

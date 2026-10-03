@@ -8,6 +8,11 @@ MODULE_CONFIG_DIR="${MODULE_CONFIG_DIR:-${MODDIR}/config}"
 PERSONA_FLAG="${PERSONA_FLAG:-${DATA_DIR}/persona_active}"
 BACKUP_FILE="${BACKUP_FILE:-${DATA_DIR}/backup.conf}"
 REBOOT_PENDING="${REBOOT_PENDING:-${DATA_DIR}/reboot_pending}"
+APPLIED_BOOT_FILE="${APPLIED_BOOT_FILE:-${DATA_DIR}/applied_boot}"
+BOOT_ATTEMPTS_FILE="${BOOT_ATTEMPTS_FILE:-${DATA_DIR}/boot_attempts}"
+BOOT_WATCH_FILE="${BOOT_WATCH_FILE:-${DATA_DIR}/boot_watch_ok}"
+BOOT_GUARD_OFF_FILE="${BOOT_GUARD_OFF_FILE:-${CONFIG_DIR}/boot_guard_off}"
+AUTO_DISABLED_FILE="${AUTO_DISABLED_FILE:-${DATA_DIR}/auto_disabled}"
 PERSONAS_DIR="${PERSONAS_DIR:-${DATA_DIR}/personas}"
 ACTIVE_PERSONA_FILE="${ACTIVE_PERSONA_FILE:-${DATA_DIR}/active_persona}"
 LOG_FILE="${LOG_FILE:-${DATA_DIR}/devicespooflab.log}"
@@ -38,9 +43,12 @@ prepare_private_log() {
 
     [ "$_DEVICESPOOFLAB_LOG_READY" = "$LOG_FILE" ] && return 0
 
+    # A process costs 15 to 20 ms on a phone, so nothing is made or changed that is already there.
     LOG_DIR="${LOG_FILE%/*}"
-    mkdir -p "$LOG_DIR" 2>/dev/null
-    chmod 700 "$LOG_DIR" 2>/dev/null
+    if [ ! -d "$LOG_DIR" ]; then
+        mkdir -p "$LOG_DIR" 2>/dev/null
+        chmod 700 "$LOG_DIR" 2>/dev/null
+    fi
 
     if [ -f "$LOG_FILE" ]; then
         SIZE=$(wc -c < "$LOG_FILE" 2>/dev/null | tr -d ' ')
@@ -50,14 +58,16 @@ prepare_private_log() {
         fi
     fi
 
-    touch "$LOG_FILE" 2>/dev/null
-    chmod 600 "$LOG_FILE" 2>/dev/null
+    if [ ! -f "$LOG_FILE" ]; then
+        touch "$LOG_FILE" 2>/dev/null
+        chmod 600 "$LOG_FILE" 2>/dev/null
+    fi
     _DEVICESPOOFLAB_LOG_READY="$LOG_FILE"
 }
 
 append_log_line() {
     prepare_private_log
-    echo "$1" >> "$LOG_FILE"
+    printf '%s\n' "$1" >> "$LOG_FILE"
 }
 
 copy_state_file_if_missing() {
@@ -70,42 +80,13 @@ copy_state_file_if_missing() {
     cp -p "$SRC" "$DST" 2>/dev/null || cp "$SRC" "$DST" 2>/dev/null
 }
 
-upgrade_default_build_info_config() {
-    local FILE="${CONFIG_DIR}/build_info.conf"
-    local TMP
-
-    [ -f "$FILE" ] || return 0
-    grep -q 'google/cheetah/cheetah:15/AP4A\.241205\.013/12621605:user/release-keys' "$FILE" 2>/dev/null || return 0
-
-    TMP="${FILE}.tmp.$$"
-    if ! sed \
-        -e 's/Android 15 build fingerprint/Android 16 build fingerprint/g' \
-        -e 's/":15\/"/":16\/"/g' \
-        -e 's/cheetah:15\/AP4A\.241205\.013\/12621605/cheetah:16\/CP1A.260405.005\/15001963/g' \
-        -e 's/google\/cheetah\/cheetah:15\/AP4A\.241205\.013\/12621605:user\/release-keys/google\/cheetah\/cheetah:16\/CP1A.260405.005\/15001963:user\/release-keys/g' \
-        -e 's/AP4A\.241205\.013/CP1A.260405.005/g' \
-        -e 's/12621605/15001963/g' \
-        -e 's/cheetah-user 15 CP1A.260405.005 15001963 release-keys/generic_system_google-user 16 CP1A.260405.005 15001963 release-keys/g' \
-        -e 's/2024-12-05/2026-04-05/g' \
-        -e 's/cheetah-user/generic_system_google-user/g' \
-        "$FILE" > "$TMP" 2>/dev/null; then
-        rm -f "$TMP" 2>/dev/null
-        return 0
-    fi
-
-    mv -f "$TMP" "$FILE" 2>/dev/null || {
-        rm -f "$TMP" 2>/dev/null
-        return 0
-    }
-
-    chmod 600 "$FILE" 2>/dev/null
-    state_log "Upgraded default build_info.conf fingerprint to Android 16"
-}
-
 ensure_persistent_state() {
-    mkdir -p "$DATA_DIR" "$CONFIG_DIR" 2>/dev/null
-    chmod 700 "$DATA_DIR" "$CONFIG_DIR" 2>/dev/null
-    prepare_private_log
+    if [ ! -d "$DATA_DIR" ] || [ ! -d "$CONFIG_DIR" ]; then
+        mkdir -p "$DATA_DIR" "$CONFIG_DIR" 2>/dev/null
+        chmod 700 "$DATA_DIR" "$CONFIG_DIR" 2>/dev/null
+    fi
+    # The log is made and trimmed by its first write (append_log_line), not here: this runs at the
+    # start of every command, and most commands (status, personas, read-config) never log.
 
     if [ -f "$LEGACY_PERSONA_FLAG" ] && [ ! -f "$PERSONA_FLAG" ]; then
         touch "$PERSONA_FLAG" 2>/dev/null && state_log "Migrated persona_active to $PERSONA_FLAG"
@@ -135,6 +116,4 @@ ensure_persistent_state() {
             fi
         fi
     done
-
-    upgrade_default_build_info_config
 }

@@ -320,6 +320,8 @@ main { padding: 8px 16px 0; max-width: 720px; margin: 0 auto; }
   animation: spin .7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+.overlay.quiet { background: transparent; backdrop-filter: none; }
+.overlay.quiet .spinner { visibility: hidden; }
 
 .hidden { display: none !important; }
 
@@ -384,6 +386,33 @@ main { padding: 8px 16px 0; max-width: 720px; margin: 0 auto; }
 .persona-del:active { transform: translateY(1px); }
 .persona-del.armed { color: #fff; background: var(--danger); border-color: var(--danger); font-size: 12px; font-weight: 700; }
 .personas-empty .card-title { margin-bottom: 6px; }
+
+.persona-tools { display: flex; gap: 10px; margin-top: 12px; }
+.persona-tools > .btn { flex: 1; min-height: 40px; padding: 9px 12px; }
+.persona-tools > .persona-new { flex: 0 0 auto; padding: 9px 16px; }
+.device-select {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  font: inherit;
+  font-size: 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  background: var(--card);
+  color: var(--text);
+}
+.device-select:focus { outline: 2px solid var(--accent-weak); border-color: var(--accent); }
+.device-note { margin: 8px 2px 0; color: var(--warn); }
+
+.import-list { display: flex; flex-direction: column; }
+.import-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--border); }
+.import-row:first-child { border-top: 0; }
+.import-txt { flex: 1; min-width: 0; }
+.import-file { font-size: 14px; font-weight: 600; word-break: break-all; }
+.import-dir { font-size: 12px; color: var(--muted); }
+.import-btn { flex: 0 0 auto; min-height: 36px; padding: 6px 14px; }
+#import-card .muted { margin-bottom: 0; }
 
 .persona-active-name { margin-top: 6px; font-size: 13px; color: var(--muted); }
 .persona-active-name::before { content: "Persona: "; }

@@ -1,10 +1,11 @@
 #!/system/bin/sh
-# Uninstall cleanup: restore original props/Android IDs, remove state.
+# Uninstall cleanup: restore Android IDs and any prop still spoofed, remove state.
 
 MODDIR=${0%/*}
 DATA_DIR="${DATA_DIR:-/data/adb/devicespooflab}"
 CONFIG_DIR="${CONFIG_DIR:-${DATA_DIR}/config}"
 BACKUP_FILE="${BACKUP_FILE:-${DATA_DIR}/backup.conf}"
+APPLIED_BOOT_FILE="${APPLIED_BOOT_FILE:-${DATA_DIR}/applied_boot}"
 ANDROID_ID_RESTORE_FAILED=0
 RESETPROP_BIN=""
 
@@ -107,14 +108,35 @@ remove_module_persistent_prop() {
     local RESETPROP
     RESETPROP=$(find_resetprop) || return 0
 
-    "$RESETPROP" --delete persist.devicespooflab.allow_unsafe 2>/dev/null || \
-        "$RESETPROP" -p --delete persist.devicespooflab.allow_unsafe 2>/dev/null || \
-        "$RESETPROP" -n persist.devicespooflab.allow_unsafe "" 2>/dev/null
+    "$RESETPROP" -p --delete persist.devicespooflab.allow_unsafe 2>/dev/null || \
+        "$RESETPROP" --delete persist.devicespooflab.allow_unsafe 2>/dev/null
 }
 
+module_set_prop() {
+    local CONF
+    for CONF in device_identity build_info identifiers custom; do
+        grep -qxF "ENABLED,$1,$2" "${CONFIG_DIR}/${CONF}.conf" 2>/dev/null && return 0
+    done
+    return 1
+}
+
+# post-fs-data.sh records the kernel boot id when it applies props.
+props_applied_this_boot() {
+    local NOW THEN
+    NOW=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
+    THEN=$(cat "$APPLIED_BOOT_FILE" 2>/dev/null)
+    [ -n "$NOW" ] && [ "$NOW" = "$THEN" ]
+}
+
+# A normal uninstall runs at the next boot before any module script: the real props are
+# already in place and nothing is written. Props are put back only when they were applied
+# in this same boot (manager soft reboot, removal on a running system), and then only a
+# prop that still holds the value this module set.
 restore_runtime_props() {
-    local RESETPROP LINE KEY VALUE COUNT=0
+    local RESETPROP LINE KEY VALUE CURRENT COUNT=0
     [ -f "$BACKUP_FILE" ] || return 0
+    props_applied_this_boot || return 0
+    case "$(type should_apply_prop 2>/dev/null)" in *function*) ;; *) return 0 ;; esac
     RESETPROP=$(find_resetprop) || return 0
 
     while IFS= read -r LINE || [ -n "$LINE" ]; do
@@ -122,7 +144,12 @@ restore_runtime_props() {
         KEY=${LINE%%=*}
         VALUE=${LINE#*=}
         [ "$KEY" != "$LINE" ] || continue
-        [ -n "$KEY" ] || continue
+        [ -n "$KEY" ] && [ -n "$VALUE" ] || continue
+
+        CURRENT=$(getprop "$KEY" 2>/dev/null)
+        [ -n "$CURRENT" ] && [ "$CURRENT" != "$VALUE" ] || continue
+        module_set_prop "$KEY" "$CURRENT" || continue
+        should_apply_prop "$KEY" "$VALUE" "uninstall" "backup.conf" || continue
 
         if "$RESETPROP" -n "$KEY" "$VALUE" 2>/dev/null; then
             COUNT=$((COUNT + 1))
@@ -131,6 +158,12 @@ restore_runtime_props() {
 
     [ "$COUNT" -gt 0 ] && log "Runtime props restored from backup ($COUNT)"
 }
+
+# A file with a syntax error would end this script when sourced; try it in a subshell first.
+# Without the guard nothing is restored.
+if [ -f "${MODDIR}/common/prop_safety.sh" ] && ( . "${MODDIR}/common/prop_safety.sh" ) >/dev/null 2>&1; then
+    . "${MODDIR}/common/prop_safety.sh"
+fi
 
 restore_android_id_state
 restore_runtime_props

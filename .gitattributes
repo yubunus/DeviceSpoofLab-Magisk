@@ -1,0 +1,17 @@
+# The module's text files must keep LF line endings: a CR breaks module.prop, the shell
+# scripts and the config files on the phone.
+* text=auto eol=lf
+
+*.sh text eol=lf
+*.conf text eol=lf
+*.prop text eol=lf
+*.html text eol=lf
+*.js text eol=lf
+*.css text eol=lf
+*.md text eol=lf
+/system/bin/* text eol=lf
+/META-INF/** text eol=lf
+
+*.jpg binary
+*.png binary
+*.zip binary

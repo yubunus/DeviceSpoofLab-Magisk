@@ -1,6 +1,6 @@
 id=devicespooflab
 name=DeviceSpoofLabs
-version=3.0
-versionCode=7
+version=3.1
+versionCode=8
 author=@yubunus
 description=A root module for spoofing Android device properties across Magisk, KernelSU, and APatch.

@@ -47,6 +47,22 @@ function buildCmd(args) { return BIN + " " + args.map(shQuote).join(" "); }
 
 function toB64(str) { return btoa(unescape(encodeURIComponent(str))); }
 
+// One stream of a "--b64" reply: "b64:" and then the base64 of the bytes webctl.sh printed (the
+// line breaks base64 puts in do not count). Anything else gives null: it did not come from
+// webctl.sh's encoder but is, for example, the shell's own message when it could not run the script.
+function fromB64(text) {
+  var m = /^b64:([A-Za-z0-9+\/]*={0,2})$/.exec(String(text || "").replace(/\s+/g, ""));
+  if (!m || m[1].length % 4 !== 0) return null;
+  var bin;
+  try { bin = atob(m[1]); } catch (e) { return null; }
+  if (typeof TextDecoder !== "undefined") {
+    var bytes = new Uint8Array(bin.length);
+    for (var i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new TextDecoder("utf-8", { ignoreBOM: true }).decode(bytes);
+  }
+  try { return decodeURIComponent(escape(bin)); } catch (e) { return bin; }
+}
+
 function escapeHtml(s) {
   return String(s).replace(/[&<>"]/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
@@ -54,9 +70,25 @@ function escapeHtml(s) {
 }
 
 var overlayDepth = 0;
+var overlayTimer = null;
+var OVERLAY_QUIET_MS = 350;
+// The overlay blocks taps at once. It dims the page and shows the spinner only when the reply
+// takes longer than OVERLAY_QUIET_MS, so a quick reply (most of them) does not flash it.
 function showOverlay(on) {
+  var el = $("#overlay");
   overlayDepth = Math.max(0, overlayDepth + (on ? 1 : -1));
-  $("#overlay").classList.toggle("hidden", overlayDepth === 0);
+  if (overlayDepth === 0) {
+    if (overlayTimer) { clearTimeout(overlayTimer); overlayTimer = null; }
+    el.classList.add("hidden");
+    el.classList.remove("quiet");
+  } else if (el.classList.contains("hidden")) {
+    el.classList.remove("hidden");
+    el.classList.add("quiet");
+    overlayTimer = setTimeout(function () {
+      overlayTimer = null;
+      el.classList.remove("quiet");
+    }, OVERLAY_QUIET_MS);
+  }
 }
 
 function toast(msg, options) {
@@ -81,9 +113,19 @@ function toast(msg, options) {
   }, options.reboot ? REBOOT_TOAST_MS : DEFAULT_TOAST_MS);
 }
 
+// Every command is called with --b64: the bridge of KernelSU, SukiSU and APatch decodes "%" plus
+// two hex digits in a command's output before the page gets it, and base64 has no "%".
 async function webctl() {
   var args = Array.prototype.slice.call(arguments);
-  var r = await exec(buildCmd(args));
+  var r = await exec(buildCmd(["--b64"].concat(args)));
+  var out = fromB64(r.stdout);
+  var err = fromB64(r.stderr);
+  // stdout without the marker did not get through the encoder (the shell could not run the script,
+  // or base64 failed): the call counts as failed whatever the exit status says, and what did
+  // arrive is kept as text.
+  if (out === null && r.errno === 0) r.errno = 1;
+  if (out !== null) r.stdout = out;
+  if (err !== null) r.stderr = err;
   return r;
 }
 
@@ -184,6 +226,18 @@ function renderStatus() {
     }
   }
 
+  var autoOff = $("#auto-disabled");
+  if (autoOff) {
+    if (STATE.auto_disabled && !STATE.persona_active) {
+      autoOff.textContent = (STATE.auto_disabled_name ? "\"" + STATE.auto_disabled_name + "\"" : "The persona") +
+        " was switched off automatically: the phone did not finish starting up twice in a row with it on." +
+        " Switch it on again in Personas to retry.";
+      autoOff.classList.remove("hidden");
+    } else {
+      autoOff.classList.add("hidden");
+    }
+  }
+
   $("#settings-unsafe").textContent = STATE.unsafe_props ? "ENABLED (allowlist bypassed)" : "Off";
   $("#settings-backup").textContent = STATE.has_backup ? "Yes" : "Not yet (captured on first activation)";
 
@@ -215,7 +269,7 @@ function renderValues() {
     if (Number(v.spoofable) === 0) {
       var tag = document.createElement("span");
       tag.className = "tag tag-hw";
-      tag.textContent = "hardware tell";
+      tag.textContent = "not spoofed";
       label.appendChild(tag);
     } else if (STATE.persona_active && v.configured && v.live !== v.configured) {
       var pend = document.createElement("span");
@@ -466,10 +520,13 @@ async function loadConfigEditors() {
       var cf = CONFIG_FILES[i];
       var r = await webctl("read-config", cf.name);
       if (r.errno !== 0) continue;
+      // A config written outside the WebUI may have CRLF line ends. The editors work with LF,
+      // and a save writes the file that way.
+      var text = r.stdout.replace(/\r\n?/g, "\n");
       if (cf.mode === "raw") {
-        container.appendChild(renderRawEditor(cf.name, r.stdout));
+        container.appendChild(renderRawEditor(cf.name, text));
       } else {
-        container.appendChild(renderStructuredEditor(cf.name, parseConfig(r.stdout)));
+        container.appendChild(renderStructuredEditor(cf.name, parseConfig(text)));
       }
     }
     CONFIGS_LOADED = true;
@@ -1075,7 +1132,7 @@ async function commitPersonaRename(p, inputEl) {
   var newName = (inputEl.value || "").trim();
   if (!newName || newName === p.name) { inputEl.value = p.name || "Persona"; return; }
   try {
-    var res = await webctlJSON("persona-rename", p.id, toB64(newName));
+    var res = await webctlJSON("persona-rename", p.id, "b64:" + toB64(newName));
     if (res && res.ok === false) { toast(res.message || "Rename failed"); inputEl.value = p.name; return; }
     p.name = newName;
     if (p.active && STATE) { STATE.active_persona_name = newName; renderStatus(); }
@@ -1099,9 +1156,11 @@ async function setPersonaActive(id, on) {
 }
 
 async function generatePersona() {
+  var sel = $("#device-select");
+  var device = sel && !sel.classList.contains("hidden") ? sel.value : "";
   showOverlay(true);
   try {
-    var res = await webctlJSON("generate-persona");
+    var res = await webctlJSON("generate-persona", "", device);
     if (res && res.ok === false) { toast(res.message || "Could not generate persona"); return; }
     if (res && res.message) toast(res.message, { reboot: !!res.reboot_required });
     resetConfigEditors();
@@ -1130,11 +1189,148 @@ async function deletePersona(p) {
   }
 }
 
+var DEVICES = [];
+var DEVICES_LOADED = false;
+var PHONE_ANDROID = "";
+
+async function loadDevices() {
+  if (DEVICES_LOADED) return;
+  try {
+    var data = await webctlJSON("devices");
+    if (data && data.ok !== false && Array.isArray(data.devices) && data.devices.length) {
+      DEVICES = data.devices;
+      PHONE_ANDROID = data.android || "";
+      DEVICES_LOADED = true;
+      renderDevices();
+    }
+  } catch (e) {
+    uiLog("devices load threw: " + (e && e.message ? e.message : String(e)));
+  }
+}
+
+function renderDevices() {
+  var sel = $("#device-select");
+  if (!sel) return;
+  sel.innerHTML = "";
+  DEVICES.forEach(function (d) {
+    var opt = document.createElement("option");
+    opt.value = d.key;
+    opt.textContent = d.label + " · Android " + d.android + (d.match ? "" : " ⚠");
+    sel.appendChild(opt);
+  });
+  var rnd = document.createElement("option");
+  rnd.value = "random";
+  rnd.textContent = "Random device";
+  sel.appendChild(rnd);
+  sel.classList.remove("hidden");
+  updateDeviceNote();
+}
+
+function updateDeviceNote() {
+  var sel = $("#device-select");
+  var note = $("#device-note");
+  if (!sel || !note) return;
+  var d = DEVICES.filter(function (x) { return x.key === sel.value; })[0];
+  if (d && !d.match) {
+    note.textContent = "No Android " + (PHONE_ANDROID || "?") + " build for " + d.label +
+      ", so it uses its Android " + d.android + " build.";
+    note.classList.remove("hidden");
+  } else {
+    note.classList.add("hidden");
+  }
+}
+
+async function exportPersonas() {
+  showOverlay(true);
+  try {
+    var res = await webctlJSON("persona-export", "all");
+    toast(res.message || (res.ok === false ? "Export failed" : "Exported"));
+  } catch (e) {
+    toast("Export failed");
+    uiLog("persona export threw: " + (e && e.message ? e.message : String(e)));
+  } finally {
+    showOverlay(false);
+  }
+}
+
+async function toggleImportCard() {
+  var card = $("#import-card");
+  if (!card) return;
+  if (!card.classList.contains("hidden")) { card.classList.add("hidden"); return; }
+  await loadImportFiles();
+  card.classList.remove("hidden");
+}
+
+async function loadImportFiles() {
+  showOverlay(true);
+  try {
+    var data = await webctlJSON("persona-imports");
+    if (data && data.ok === false) toast(data.message || "Could not list files");
+    renderImportFiles(data && Array.isArray(data.files) ? data.files : []);
+  } catch (e) {
+    toast("Could not list files");
+    renderImportFiles([]);
+  } finally {
+    showOverlay(false);
+  }
+}
+
+function importFolder(path) {
+  return String(path || "").replace(/^\/storage\/emulated\/0\//, "").replace(/\/[^\/]*$/, "");
+}
+
+function renderImportFiles(files) {
+  var list = $("#import-list");
+  var empty = $("#import-empty");
+  if (!list || !empty) return;
+  list.innerHTML = "";
+  empty.classList.toggle("hidden", files.length > 0);
+  files.forEach(function (f) {
+    var row = document.createElement("div");
+    row.className = "import-row";
+
+    var txt = document.createElement("div");
+    txt.className = "import-txt";
+    var file = document.createElement("div");
+    file.className = "import-file";
+    file.textContent = f.file;
+    var dir = document.createElement("div");
+    dir.className = "import-dir";
+    dir.textContent = importFolder(f.path);
+    txt.appendChild(file);
+    txt.appendChild(dir);
+
+    var btn = document.createElement("button");
+    btn.className = "btn import-btn";
+    btn.type = "button";
+    btn.textContent = "Import";
+    btn.addEventListener("click", function () { importPersona(f.path); });
+
+    row.appendChild(txt);
+    row.appendChild(btn);
+    list.appendChild(row);
+  });
+}
+
+async function importPersona(path) {
+  showOverlay(true);
+  try {
+    var res = await webctlJSON("persona-import", path);
+    toast(res.message || (res.ok === false ? "Import failed" : "Imported"));
+    if (res.ok !== false && !res.skipped) await loadPersonas();
+  } catch (e) {
+    toast("Import failed");
+    uiLog("persona import threw: " + (e && e.message ? e.message : String(e)));
+  } finally {
+    showOverlay(false);
+  }
+}
+
 function switchTab(tab) {
   $all(".tab").forEach(function (b) { b.classList.toggle("is-active", b.dataset.tab === tab); });
   $all(".tab-panel").forEach(function (p) { p.classList.toggle("is-active", p.id === "panel-" + tab); });
   if (!hasBridge()) return;
-  if (tab === "personas") loadPersonas();
+  if (tab === "personas") { loadPersonas(); loadDevices(); }
   if (tab === "config") showConfigTab();
 }
 
@@ -1181,6 +1377,12 @@ function wire() {
 
   var gen = $("#btn-generate-persona");
   if (gen) gen.addEventListener("click", generatePersona);
+  var devSel = $("#device-select");
+  if (devSel) devSel.addEventListener("change", updateDeviceNote);
+  var imp = $("#btn-import-personas");
+  if (imp) imp.addEventListener("click", toggleImportCard);
+  var exp = $("#btn-export-personas");
+  if (exp) exp.addEventListener("click", exportPersonas);
 
   var retry = $("#btn-retry-status");
   if (retry) retry.addEventListener("click", refresh);
@@ -1201,8 +1403,16 @@ function init() {
     return;
   }
 
-  refresh();
-  uiLog("webui init: bridge available; ua=" + (navigator.userAgent || "?").slice(0, 120));
+  // Each call is a root shell of its own and two at once slow each other down: the status goes
+  // first, then the start line. If the status takes long, the line is written after 3 s anyway.
+  var initLogged = false;
+  var logInit = function () {
+    if (initLogged) return;
+    initLogged = true;
+    uiLog("webui init: bridge available; ua=" + (navigator.userAgent || "?").slice(0, 120));
+  };
+  refresh().then(logInit, logInit);
+  setTimeout(logInit, 3000);
 }
 
 if (document.readyState === "loading") {

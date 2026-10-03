@@ -30,6 +30,8 @@ devicespooflabs status
 devicespooflabs generate-persona
 devicespooflabs activate
 devicespooflabs deactivate
+devicespooflabs persona-export
+devicespooflabs persona-import /sdcard/Download/DeviceSpoofLabs/&lt;file&gt;.persona
 devicespooflabs reboot</pre>
     </div>
 
@@ -38,6 +40,7 @@ devicespooflabs reboot</pre>
         <div class="card-label">Persona status</div>
         <div id="persona-status" class="status-pill status-unknown">Loading…</div>
         <div id="persona-active-name" class="persona-active-name hidden"></div>
+        <div id="auto-disabled" class="status-error-note hidden"></div>
         <div id="status-error" class="status-error-note hidden">
           <span>Couldn't read module status. Spoofing may still be active — this is a read
             error, not a confirmation that the persona is off.</span>
@@ -59,13 +62,28 @@ devicespooflabs reboot</pre>
           <p class="muted" style="margin:2px 0 0">Switch one on to spoof its identity. Only one
             runs at a time; with none on, nothing is spoofed. Changes apply on reboot.</p>
         </div>
+      </div>
+      <div class="persona-tools">
+        <select id="device-select" class="device-select hidden" aria-label="Device for new personas"></select>
         <button class="btn btn-primary persona-new" id="btn-generate-persona">+ Generate</button>
+      </div>
+      <div id="device-note" class="muted-note device-note hidden"></div>
+      <div class="persona-tools">
+        <button class="btn" id="btn-import-personas">Import</button>
+        <button class="btn" id="btn-export-personas">Export all</button>
+      </div>
+      <div id="import-card" class="card hidden">
+        <div class="card-title">Import a persona</div>
+        <div id="import-list" class="import-list"></div>
+        <p id="import-empty" class="muted hidden">No <b>.persona</b> files found. Put one in
+          <b>Download/DeviceSpoofLabs</b> or <b>Download</b>, then tap Import again.</p>
       </div>
       <div id="personas-list" class="personas-list"></div>
       <div id="personas-empty" class="card personas-empty hidden">
         <div class="card-title">No personas yet</div>
-        <p class="muted">Tap <b>+ Generate</b> to create your first spoofed identity. You can rename
-          it, tweak its config, and switch it on or off from here.</p>
+        <p class="muted">Pick a device and tap <b>+ Generate</b> to create your first spoofed identity,
+          or <b>Import</b> one you exported. You can rename it, tweak its config, and switch it on or
+          off from here.</p>
       </div>
     </section>
 

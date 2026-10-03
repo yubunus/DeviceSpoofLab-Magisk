@@ -26,11 +26,12 @@ generate_hex() {
     esac
     [ "$LENGTH" -lt 1 ] && LENGTH=16
 
-    LC_ALL=C tr -dc 'a-f0-9' < /dev/urandom | head -c "$LENGTH"
+    # dd, not head -c: toybox on Android 8.0 has no head -c.
+    LC_ALL=C tr -dc 'a-f0-9' < /dev/urandom | dd bs=1 count="$LENGTH" 2>/dev/null
 }
 
 generate_serial() {
-    LC_ALL=C tr -dc 'A-Z0-9' < /dev/urandom | head -c 12
+    LC_ALL=C tr -dc 'A-Z0-9' < /dev/urandom | dd bs=1 count=12 2>/dev/null
 }
 
 resolve_value() {
@@ -76,24 +77,23 @@ has_generator_token() {
 freeze_config_generators() {
     local FILE="$1"
     local TMP="${FILE}.tmp.$$"
-    local LINE STATUS PROP RAW VALUE REST CHANGED=0
+    local LINE STATUS PROP RAW VALUE REST OUT="" CHANGED=0 NL='
+'
 
     FREEZE_CONFIG_CHANGED=0
     [ -f "$FILE" ] || return 0
 
-    grep -qF '${RANDOM_' "$FILE" 2>/dev/null || return 0
-
-    : > "$TMP" || return 1
-
+    # The new text is built in memory and written only when a token was resolved. Most files have
+    # none, and a process per line is what made this slow on a phone.
     while IFS= read -r LINE || [ -n "$LINE" ]; do
         case "$LINE" in
             ''|'#'*|FILE_ENABLED|FILE_DISABLED)
-                printf '%s\n' "$LINE" >> "$TMP" || { rm -f "$TMP"; return 1; }
+                OUT="${OUT}${LINE}${NL}"
                 continue
                 ;;
             *'${RANDOM_'*) ;;
             *)
-                printf '%s\n' "$LINE" >> "$TMP" || { rm -f "$TMP"; return 1; }
+                OUT="${OUT}${LINE}${NL}"
                 continue
                 ;;
         esac
@@ -104,19 +104,17 @@ freeze_config_generators() {
         RAW=${REST#*,}
 
         if [ "$STATUS" != "$LINE" ] && [ -n "$PROP" ] && has_generator_token "$RAW"; then
-            VALUE=$(resolve_value "$RAW") || { rm -f "$TMP"; return 1; }
-            printf '%s,%s,%s\n' "$STATUS" "$PROP" "$VALUE" >> "$TMP" || { rm -f "$TMP"; return 1; }
+            VALUE=$(resolve_value "$RAW") || return 1
+            OUT="${OUT}${STATUS},${PROP},${VALUE}${NL}"
             CHANGED=1
         else
-            printf '%s\n' "$LINE" >> "$TMP" || { rm -f "$TMP"; return 1; }
+            OUT="${OUT}${LINE}${NL}"
         fi
     done < "$FILE"
 
-    if [ "$CHANGED" -eq 1 ]; then
-        chmod 600 "$TMP" 2>/dev/null
-        mv -f "$TMP" "$FILE"
-        FREEZE_CONFIG_CHANGED=1
-    else
-        rm -f "$TMP"
-    fi
+    [ "$CHANGED" -eq 1 ] || return 0
+    printf '%s' "$OUT" > "$TMP" || { rm -f "$TMP"; return 1; }
+    chmod 600 "$TMP" 2>/dev/null
+    mv -f "$TMP" "$FILE"
+    FREEZE_CONFIG_CHANGED=1
 }

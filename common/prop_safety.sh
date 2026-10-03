@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# Allowlist guard: only device-identity props may be spoofed; everything else is rejected.
+# Allowlist guard: only safe identity props may be spoofed; security_patch is blocked even in unsafe mode.
 
 ALLOW_UNSAFE_PROPS_FILE="${CONFIG_DIR}/allow_unsafe_props"
 
@@ -15,32 +15,41 @@ unsafe_props_allowed() {
     return 1
 }
 
+is_blocked_prop() {
+    case "$1" in
+        ro.build.version.security_patch|\
+        ro.vendor.build.security_patch|\
+        ro.odm.build.security_patch)
+            return 0
+            ;;
+    esac
+
+    return 1
+}
+
 is_safe_identity_prop() {
     case "$1" in
         ro.product.brand|\
         ro.product.manufacturer|\
         ro.product.model|\
-        ro.product.name|\
-        ro.product.device|\
-        ro.product.board|\
-        ro.product.system.*|\
-        ro.product.system_ext.*|\
-        ro.product.product.*|\
-        ro.product.vendor.*|\
-        ro.product.odm.*)
+        ro.product.product.brand|\
+        ro.product.product.manufacturer|\
+        ro.product.product.model|\
+        ro.product.system.brand|\
+        ro.product.system.manufacturer|\
+        ro.product.system.model|\
+        ro.product.system_ext.brand|\
+        ro.product.system_ext.manufacturer|\
+        ro.product.system_ext.model)
             return 0
             ;;
         ro.build.fingerprint|\
         ro.build.id|\
         ro.build.display.id|\
         ro.build.version.incremental|\
-        ro.build.version.security_patch|\
         ro.build.type|\
         ro.build.tags|\
         ro.build.description|\
-        ro.build.product|\
-        ro.build.device|\
-        ro.build.characteristics|\
         ro.build.flavor|\
         ro.product.build.fingerprint|\
         ro.product.build.id|\
@@ -54,23 +63,13 @@ is_safe_identity_prop() {
         ro.vendor.build.fingerprint|\
         ro.vendor.build.id|\
         ro.vendor.build.version.incremental|\
-        ro.vendor.build.security_patch|\
         ro.vendor.build.tags|\
         ro.vendor.build.type|\
         ro.odm.build.fingerprint|\
-        ro.odm.build.id|\
-        ro.odm.build.version.incremental|\
-        ro.odm.build.security_patch|\
-        ro.odm.build.tags|\
-        ro.odm.build.type|\
-        ro.bootimage.build.fingerprint|\
-        ro.bootimage.build.id|\
-        ro.bootimage.build.version.incremental)
+        ro.odm.build.version.incremental)
             return 0
             ;;
-        ro.serialno|\
-        ro.boot.serialno|\
-        ro.bootloader)
+        ro.serialno)
             return 0
             ;;
     esac
@@ -83,6 +82,11 @@ should_apply_prop() {
     local VALUE="$2"
     local STAGE="$3"
     local SOURCE="$4"
+
+    if is_blocked_prop "$PROP"; then
+        safety_log "Hard block (${STAGE}/${SOURCE}): $PROP=$VALUE (never spoofed, even in unsafe mode)"
+        return 1
+    fi
 
     unsafe_props_allowed && return 0
 
